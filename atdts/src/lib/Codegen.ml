@@ -256,11 +256,29 @@ function _atd_read_float(x: any, context: any): number {
   }
 }
 
+function _atd_read_int_of_string(x: any, context: any): string {
+  if (typeof x === 'string')
+    return Number.parseInt(x)
+  else {
+    _atd_bad_json('string as int', x, context)
+    throw new Error('impossible')
+  }
+}
+
 function _atd_read_string(x: any, context: any): string {
   if (typeof x === 'string')
     return x
   else {
     _atd_bad_json('string', x, context)
+    throw new Error('impossible')
+  }
+}
+
+function _atd_read_bigint_of_string(x: any, context: any): string {
+  if (typeof x === 'string')
+    return BigInt(x)
+  else {
+    _atd_bad_json('string as bigint', x, context)
     throw new Error('impossible')
   }
 }
@@ -428,6 +446,15 @@ function _atd_write_int(x: any, context: any): number /*int*/ {
   }
 }
 
+function _atd_write_int_to_string(x: any, context: any): string {
+  if (Number.isInteger(x))
+    return x.toString()
+  else {
+    _atd_bad_ts('int as string', x, context)
+    throw new Error('impossible')
+  }
+}
+
 function _atd_write_float(x: any, context: any): number {
   if (isFinite(x))
     return x
@@ -442,6 +469,15 @@ function _atd_write_string(x: any, context: any): string {
     return x
   else {
     _atd_bad_ts('string', x, context)
+    throw new Error('impossible')
+  }
+}
+
+function _atd_write_bigint_to_string(x: any, context: any): string {
+  if (typeof x === 'bigint')
+    return x.toString()
+  else {
+    _atd_bad_ts('bigint as string', x, context)
     throw new Error('impossible')
   }
 }
@@ -648,11 +684,11 @@ let get_ts_default (e : type_expr) (an : annot) : string option =
   | Some s -> Some s
   | None -> get_default_default e
 
-(* piggy-back on ocaml annotations TODO check ts ones first *)
-let get_annot an field = Atd.Annot.get_opt_field ~parse:(fun s -> Some s) ~sections:["ocaml"] ~field an
+let get_annot an section field = Atd.Annot.get_opt_field ~parse:(fun s -> Some s) ~sections:[section] ~field an
 
 let get_from ~default_t an =
-  match get_annot an "from", get_annot an "t" with
+  (* piggy-back on ocaml annotations TODO check ts ones first *)
+  match get_annot an "ocaml" "from", get_annot an "ocaml" "t" with
   | Some from, Some t -> Some (from,t)
   | Some from, None -> Some (from,default_t)
   | _ -> None
@@ -703,9 +739,12 @@ let rec json_reader env e =
   | Shared (loc, e, an) -> not_implemented loc "shared"
   | Wrap (loc, e, an) -> json_reader env e
   | Name (loc, (loc2, name, []), an) ->
-      (match name with
-       | "bool" | "int" | "float" | "string" | "unit" -> sprintf "_atd_read_%s" name
-       | "abstract" -> "((x: any, context): any => x)"
+      (match name, get_annot an "json" "repr", get_annot an "ts" "repr" with
+       | "int", Some "string", None -> sprintf "_atd_read_int_of_string"
+       | "int", Some "string", Some "string" -> "_atd_read_string"
+       | "int", Some "string", Some "bigint" -> "_atd_read_bigint_of_string"
+       | ("bool" | "int" | "float" | "string" | "unit"), _, _ -> sprintf "_atd_read_%s" name
+       | "abstract",_,_ -> "((x: any, context): any => x)"
        | _ -> reader_name env name)
   | Name (loc, _, _) -> assert false
   | Tvar (loc, _) -> not_implemented loc "type variables"
@@ -751,9 +790,12 @@ let rec json_writer env e =
   | Shared (loc, e, an) -> not_implemented loc "shared"
   | Wrap (loc, e, an) -> json_writer env e
   | Name (loc, (loc2, name, []), an) ->
-      (match name with
-       | "bool" | "int" | "float" | "string" | "unit" -> sprintf "_atd_write_%s" name
-       | "abstract" -> "((x: any, context): any => x)"
+      (match name, get_annot an "json" "repr", get_annot an "ts" "repr" with
+       | "int", Some "string", None -> sprintf "_atd_write_int_to_string"
+       | "int", Some "string", Some "string" -> "_atd_write_string"
+       | "int", Some "string", Some "bigint" -> "_atd_write_bigint_to_string"
+       | ("bool" | "int" | "float" | "string" | "unit"), _, _ -> sprintf "_atd_write_%s" name
+       | "abstract",_,_ -> "((x: any, context): any => x)"
        | _ -> writer_name env name)
   | Name (loc, _, _) -> not_implemented loc "parametrized types"
   | Tvar (loc, _) -> not_implemented loc "type variables"
