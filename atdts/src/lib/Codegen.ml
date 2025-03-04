@@ -622,6 +622,10 @@ let ts_type_name env (name : string) =
   | "abstract" -> "any"
   | user_defined -> type_name env user_defined
 
+let tvar n = n
+let tvar_f f n = sprintf "%s_%s" f n
+let commap f l = String.concat ", " @@ List.map f l
+
 let rec type_name_of_expr env (e : type_expr) : string =
   match e with
   | Sum (loc, _, _) -> not_implemented loc "inline sum types"
@@ -644,9 +648,14 @@ let rec type_name_of_expr env (e : type_expr) : string =
   | Nullable (loc, e, an) -> sprintf "(%s | null)" (type_name_of_expr env e)
   | Shared (loc, e, an) -> not_implemented loc "shared"
   | Wrap (loc, e, an) -> type_name_of_expr env e
-  | Name (loc, (loc2, name, []), an) -> ts_type_name env name
-  | Name (loc, _, _) -> assert false
-  | Tvar (loc, _) -> not_implemented loc "type variables"
+  | Name (loc, (loc2, name, params), an) -> ts_type_name env name ^ generics_type_exprs env params
+  | Tvar (loc, n) -> tvar n
+
+and generics_params = function
+| [] -> ""
+| l -> sprintf "<%s>" @@ String.concat "," l
+
+and generics_type_exprs env l = generics_params @@ List.map (type_name_of_expr env) l
 
 and type_name_of_tuple env cells : string =
   let type_names =
@@ -746,8 +755,9 @@ let rec json_reader env e =
        | ("bool" | "int" | "float" | "string" | "unit"), _, _ -> sprintf "_atd_read_%s" name
        | "abstract",_,_ -> "((x: any, context): any => x)"
        | _ -> reader_name env name)
-  | Name (loc, _, _) -> assert false
-  | Tvar (loc, _) -> not_implemented loc "type variables"
+  | Name (loc, (loc2, name, params), an) ->
+       sprintf "%s%s(%s)" (reader_name env name) (generics_type_exprs env params) (commap (json_reader env) params)
+  | Tvar (loc, n) -> tvar_f "read" n
 
 (*
    Convert json list to tuple
@@ -797,8 +807,9 @@ let rec json_writer env e =
        | ("bool" | "int" | "float" | "string" | "unit"), _, _ -> sprintf "_atd_write_%s" name
        | "abstract",_,_ -> "((x: any, context): any => x)"
        | _ -> writer_name env name)
-  | Name (loc, _, _) -> not_implemented loc "parametrized types"
-  | Tvar (loc, _) -> not_implemented loc "type variables"
+  | Name (loc, (loc2, name, params), an) ->
+       sprintf "%s%s(%s)" (writer_name env name) (generics_type_exprs env params) (commap (json_writer env) params)
+  | Tvar (loc, n) -> tvar_f "write" n
 
 (*
    Convert tuple to json list
@@ -891,28 +902,28 @@ let flatten_variants variants =
     | Inherit _ -> assert false
   ) variants
 
-let sum_type env loc name cases =
+let sum_type env loc name params cases =
   let case_types =
     List.map (fun x -> Inline (case_type env name x)) cases
   in
   [
-    Line (sprintf "export type %s =" (type_name env name));
+    Line (sprintf "export type %s%s =" (type_name env name) (generics_params params));
     Inline case_types;
   ]
 
-let make_type_def env ((loc, (name, param, an), e) : A.type_def) : B.t =
-  if param <> [] then
-    not_implemented loc "parametrized type";
+let make_type_def env ((loc, (name, params, an), e) : A.type_def) : B.t =
+  (* if param <> [] then
+    not_implemented loc "make_type_def: parametrized type"; *)
   match e with
   | Sum (loc, variants, an) ->
-      sum_type env loc name (flatten_variants variants)
-  | Record (loc, fields, an) ->
+      sum_type env loc name params (flatten_variants variants)
+  | Record (loc, fields, an) -> (* TODO params *)
       record_type env loc name fields an
   | Tuple _
   | List _
   | Option _
   | Nullable _
-  | Name _ -> alias_type env name an e
+  | Name _ -> alias_type env name an e (* export doesn't care for generics it seems *)
   | Shared (loc, e, an) -> assert false
   | Wrap (loc, e, an) -> assert false
   | Tvar _ -> assert false
@@ -1155,7 +1166,7 @@ let write_root_expr env ~ts_type_name e =
   | Wrap (loc, e, an) -> assert false
   | Tvar _ -> assert false
 
-let make_reader env loc name an e =
+let make_reader env loc name params an e =
   let ts_type_name = type_name env name in
   let ts_name = reader_name env name in
   match get_export_from ~default_t:name an e with
@@ -1166,14 +1177,18 @@ let make_reader env loc name an e =
       ]
   | None ->
       let read = read_root_expr env ~ts_type_name e in
+      let curried = match params with
+      | [] -> ""
+      | _ -> sprintf "%s(%s) => " (generics_params params) (commap (tvar_f "read") params)
+      in
       [
-        Line (sprintf "export function %s(x: any, context: any = x): %s {"
-                ts_name ts_type_name);
+        Line (sprintf "export const %s = %s(x: any, context: any = x): %s%s => {"
+                ts_name curried ts_type_name (generics_params params));
         Block read;
         Line "}";
       ]
 
-let make_writer env loc name an e =
+let make_writer env loc name params an e =
   let ts_type_name = type_name env name in
   let ts_name = writer_name env name in
   match get_export_from ~default_t:name an e with
@@ -1184,18 +1199,20 @@ let make_writer env loc name an e =
       ]
   | None ->
       let write = write_root_expr env ~ts_type_name e in
+      let curried = match params with
+      | [] -> ""
+      | _ -> sprintf "%s(%s) => " (generics_params params) (commap (tvar_f "write") params)
+      in
       [
-        Line (sprintf "export function %s(x: %s, context: any = x): any {"
-                ts_name ts_type_name);
+        Line (sprintf "export const %s = %s(x: %s%s, context: any = x): any => {"
+                ts_name curried ts_type_name (generics_params params));
         Block write;
         Line "}";
       ]
 
-let make_functions env ((loc, (name, param, an), e) : A.type_def) : B.t =
-  if param <> [] then
-    not_implemented loc "parametrized type";
-  let writer = make_writer env loc name an e in
-  let reader = make_reader env loc name an e in
+let make_functions env ((loc, (name, params, an), e) : A.type_def) : B.t =
+  let writer = make_writer env loc name params an e in
+  let reader = make_reader env loc name params an e in
   [
     Inline writer;
     Line "";
@@ -1250,7 +1267,6 @@ let run_file src_path =
   let full_module, _original_types =
     Atd.Util.load_file
       ~annot_schema
-      ~expand:true (* monomorphization *)
       ~keep_builtins:true
       ~inherit_fields:true
       ~inherit_variants:true
