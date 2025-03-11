@@ -1176,7 +1176,9 @@ let make_reader env loc name params an e =
       let read = read_root_expr env ~ts_type_name e in
       let curried = match params with
       | [] -> ""
-      | _ -> sprintf "%s(%s) => " (generics_params params) (commap (tvar_f "read") params)
+      | _ ->
+          let args = params |> commap (fun p -> sprintf "%s:(arg:any,context:any)=>%s" (tvar_f "read" p) p) in
+          sprintf "%s(%s) => " (generics_params params) args
       in
       [
         Line (sprintf "export const %s = %s(x: any, context: any = x): %s%s => {"
@@ -1198,7 +1200,9 @@ let make_writer env loc name params an e =
       let write = write_root_expr env ~ts_type_name e in
       let curried = match params with
       | [] -> ""
-      | _ -> sprintf "%s(%s) => " (generics_params params) (commap (tvar_f "write") params)
+      | _ ->
+          let args = params |> commap (fun p -> sprintf "%s:(arg:%s,context:any)=>any" (tvar_f "write" p) p) in
+          sprintf "%s(%s) => " (generics_params params) args
       in
       [
         Line (sprintf "export const %s = %s(x: %s%s, context: any = x): any => {"
