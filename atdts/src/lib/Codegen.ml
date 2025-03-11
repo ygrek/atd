@@ -256,7 +256,7 @@ function _atd_read_float(x: any, context: any): number {
   }
 }
 
-function _atd_read_int_of_string(x: any, context: any): string {
+function _atd_read_int_of_string(x: any, context: any): number {
   if (typeof x === 'string')
     return Number.parseInt(x)
   else {
@@ -274,7 +274,7 @@ function _atd_read_string(x: any, context: any): string {
   }
 }
 
-function _atd_read_bigint_of_string(x: any, context: any): string {
+function _atd_read_bigint_of_string(x: any, context: any): BigInt {
   if (typeof x === 'string')
     return BigInt(x)
   else {
