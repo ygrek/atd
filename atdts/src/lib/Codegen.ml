@@ -838,7 +838,7 @@ let field_def env ((loc, (name, kind, an), e) : simple_field) =
     Line (sprintf "%s%s: %s;" field_name optional type_name)
   ]
 
-let record_type env loc name (fields : field list) an =
+let record_type env loc name params (fields : field list) an =
   let ts_type_name = type_name env name in
   let fields =
     List.map (function
@@ -850,7 +850,7 @@ let record_type env loc name (fields : field list) an =
     List.map (fun x -> Inline (field_def env x)) fields
   in
   [
-    Line (sprintf "export type %s = {" ts_type_name);
+    Line (sprintf "export type %s%s = {" ts_type_name (generics_params params));
     Block field_defs;
     Line "}";
   ]
@@ -912,13 +912,11 @@ let sum_type env loc name params cases =
   ]
 
 let make_type_def env ((loc, (name, params, an), e) : A.type_def) : B.t =
-  (* if param <> [] then
-    not_implemented loc "make_type_def: parametrized type"; *)
   match e with
   | Sum (loc, variants, an) ->
       sum_type env loc name params (flatten_variants variants)
-  | Record (loc, fields, an) -> (* TODO params *)
-      record_type env loc name fields an
+  | Record (loc, fields, an) ->
+      record_type env loc name params fields an
   | Tuple _
   | List _
   | Option _
